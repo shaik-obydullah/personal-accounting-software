@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>Personal Accounting</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: system-ui, -apple-system, sans-serif; }
+    .sidebar-link.active { background: #374151; }
+    .modal-overlay { background: rgba(0,0,0,0.5); }
+    [v-cloak] { display: none; }
+    .fade-in { animation: fadeIn 0.2s; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+  </style>
+</head>
+<body class="bg-gray-900 text-gray-100 min-h-screen">
+  <!-- Login Page -->
+  <div id="login-page" class="hidden min-h-screen flex items-center justify-center">
+    <!-- centered login card -->
+    <div class="bg-gray-800 p-8 rounded-lg shadow-lg w-96">
+      <h2 class="text-2xl font-bold mb-6 text-center">Login</h2>
+      <form id="login-form">
+        <div class="mb-4">
+          <label class="block mb-1 text-sm">Email</label>
+          <input type="email" id="login-email" value="admin@accounting.com" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+        </div>
+        <div class="mb-6">
+          <label class="block mb-1 text-sm">Password</label>
+          <input type="password" id="login-password" value="password" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+        </div>
+        <button type="submit" class="w-full bg-blue-600 hover:bg-blue-700 py-2 rounded font-semibold">Sign In</button>
+        <p id="login-error" class="text-red-400 mt-3 text-sm hidden"></p>
+      </form>
+    </div>
+  </div>
+
+  <!-- App Layout (hidden when not authenticated) -->
+  <div id="app-layout" class="hidden flex h-screen">
+    <!-- Sidebar -->
+    <aside class="w-64 bg-gray-800 flex-shrink-0 overflow-y-auto">
+      <div class="p-4 border-b border-gray-700">
+        <h1 class="text-lg font-bold">Accounting App</h1>
+        <p id="user-info" class="text-sm text-gray-400 mt-1"></p>
+      </div>
+      <nav class="p-2 space-y-1" id="sidebar-nav">
+        <a href="#dashboard" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-chart-pie w-5"></i>Dashboard</a>
+        <a href="#wallets" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-wallet w-5"></i>Wallets</a>
+        <a href="#incomes" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-arrow-down text-green-400 w-5"></i>Incomes</a>
+        <a href="#expenses" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-arrow-up text-red-400 w-5"></i>Expenses</a>
+        <a href="#cashbook" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-book w-5"></i>Cashbook</a>
+        <a href="#activities" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-history w-5"></i>Activities</a>
+        <a href="#configurations" class="sidebar-link flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-cog w-5"></i>Settings</a>
+        <hr class="border-gray-700 my-2">
+        <a href="#" id="logout-btn" class="flex items-center gap-3 px-3 py-2 rounded text-gray-300 hover:bg-gray-700"><i class="fas fa-sign-out-alt w-5"></i>Logout</a>
+      </nav>
+    </aside>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto p-6">
+      <div id="page-content"></div>
+    </main>
+  </div>
+
+  <!-- Modal -->
+  <div id="modal" class="hidden fixed inset-0 modal-overlay flex items-center justify-center z-50">
+    <div class="bg-gray-800 rounded-lg shadow-xl w-full max-w-lg mx-4 max-h-[90vh] overflow-y-auto p-6">
+      <div id="modal-content"></div>
+    </div>
+  </div>
+
+  <!-- Toast -->
+  <div id="toast" class="hidden fixed top-4 right-4 px-4 py-3 rounded shadow-lg z-50 text-sm"></div>
+
+<script>
+// ===== API Client =====
+const API = {
+  base: '/api',
+  async request(method, path, data) {
+    const opts = {
+      method,
+      headers: {'Content-Type': 'application/json', 'Accept': 'application/json'},
+      credentials: 'include',
+    };
+    if (data) opts.body = JSON.stringify(data);
+    const res = await fetch(this.base + path, opts);
+    if (res.status === 401 && !path.includes('/auth/login')) {
+      showLogin();
+      return null;
+    }
+    const json = await res.json();
+    if (!res.ok) throw new Error(json.error || json.detail || 'Request failed');
+    return json;
+  },
+  get(path) { return this.request('GET', path); },
+  post(path, data) { return this.request('POST', path, data); },
+  put(path, data) { return this.request('PUT', path, data); },
+  del(path) { return this.request('DELETE', path); }
+};
+
+// ===== Toast =====
+function showToast(msg, type = 'success') {
+  const t = document.getElementById('toast');
+  t.className = `fixed top-4 right-4 px-4 py-3 rounded shadow-lg z-50 text-sm fade-in ${type === 'success' ? 'bg-green-600' : 'bg-red-600'}`;
+  t.textContent = msg;
+  t.classList.remove('hidden');
+  setTimeout(() => t.classList.add('hidden'), 3000);
+}
+
+// ===== Modal =====
+function openModal(html) {
+  document.getElementById('modal-content').innerHTML = html;
+  document.getElementById('modal').classList.remove('hidden');
+}
+function closeModal() {
+  document.getElementById('modal').classList.add('hidden');
+}
+document.getElementById('modal')?.addEventListener('click', e => {
+  if (e.target === e.currentTarget) closeModal();
+});
+
+// ===== Auth =====
+async function checkAuth() {
+  const user = await API.get('/auth/me');
+  if (user) {
+    document.getElementById('user-info').textContent = `${user.user.firstName} ${user.user.lastName}`;
+    showApp();
+    return true;
+  }
+  return false;
+}
+
+function showLogin() {
+  document.getElementById('login-page').classList.remove('hidden');
+  document.getElementById('app-layout').classList.add('hidden');
+}
+
+function showApp() {
+  document.getElementById('login-page').classList.add('hidden');
+  document.getElementById('app-layout').classList.remove('hidden');
+  navigate();
+}
+
+document.getElementById('login-form')?.addEventListener('submit', async e => {
+  e.preventDefault();
+  const errEl = document.getElementById('login-error');
+  errEl.classList.add('hidden');
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      credentials: 'include',
+      body: JSON.stringify({
+        email: document.getElementById('login-email').value,
+        password: document.getElementById('login-password').value
+      })
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || data.detail || 'Invalid credentials');
+    }
+    const data = await res.json();
+    document.getElementById('user-info').textContent = `${data.user.firstName} ${data.user.lastName}`;
+    showApp();
+  } catch (err) {
+    errEl.textContent = err.message;
+    errEl.classList.remove('hidden');
+  }
+});
+
+document.getElementById('logout-btn')?.addEventListener('click', async e => {
+  e.preventDefault();
+  await API.post('/auth/logout');
+  showLogin();
+});
+
+// ===== Router =====
+const routes = {
+  dashboard: renderDashboard,
+  wallets: renderWallets,
+  incomes: renderIncomes,
+  expenses: renderExpenses,
+  cashbook: renderCashbook,
+  activities: renderActivities,
+  configurations: renderConfigurations,
+};
+
+function navigate() {
+  const hash = window.location.hash.replace('#', '') || 'dashboard';
+  const render = routes[hash] || routes.dashboard;
+  render();
+  document.querySelectorAll('.sidebar-link').forEach(l => l.classList.remove('active'));
+  const link = document.querySelector(`.sidebar-link[href="#${hash}"]`);
+  if (link) link.classList.add('active');
+}
+
+window.addEventListener('hashchange', navigate);
+
+// ===== Dashboard =====
+async function renderDashboard() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const stats = await API.get('/dashboard/stats');
+    el.innerHTML = `
+      <h2 class="text-2xl font-bold mb-6">Dashboard</h2>
+      <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Total Income</div><div class="text-2xl font-bold text-green-400">$${parseFloat(stats.totalIncome).toFixed(2)}</div></div>
+        <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Total Expense</div><div class="text-2xl font-bold text-red-400">$${parseFloat(stats.totalExpense).toFixed(2)}</div></div>
+        <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Balance</div><div class="text-2xl font-bold ${stats.balance >= 0 ? 'text-blue-400' : 'text-red-400'}">$${parseFloat(stats.balance).toFixed(2)}</div></div>
+        <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Transactions</div><div class="text-2xl font-bold">${stats.incomeCount + stats.expenseCount}</div></div>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error loading dashboard: ${e.message}</div>`;
+  }
+}
+
+// ===== Wallets =====
+async function renderWallets() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const wallets = await API.get('/wallets');
+    el.innerHTML = `
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">Wallets</h2>
+        <button onclick="showWalletForm()" class="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+      </div>
+      <div class="bg-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead><tr class="bg-gray-700 text-left text-sm">
+            <th class="p-3">Name</th><th class="p-3">Category</th><th class="p-3">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${wallets.length ? wallets.map(w => `
+              <tr class="border-t border-gray-700 text-sm">
+                <td class="p-3">${w.name}</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${w.category === 'income' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${w.category || '-'}</span></td>
+                <td class="p-3">
+                  <button onclick='showWalletForm(${JSON.stringify(w).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
+                  <button onclick='deleteWallet(${w.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="3" class="p-4 text-center text-gray-500">No wallets found</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+window.showWalletForm = function(wallet) {
+  const isEdit = !!wallet;
+  openModal(`
+    <h3 class="text-lg font-bold mb-4">${isEdit ? 'Edit' : 'Add'} Wallet</h3>
+    <form onsubmit="return saveWallet(event, '${isEdit ? wallet.id : ''}')">
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Name</label>
+        <input id="wallet-name" value="${isEdit ? wallet.name : ''}" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Category</label>
+        <select id="wallet-category" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+          <option value="income" ${isEdit && wallet.category === 'income' ? 'selected' : ''}>Income</option>
+          <option value="expense" ${isEdit && wallet.category === 'expense' ? 'selected' : ''}>Expense</option>
+        </select>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-sm">Cancel</button>
+        <button type="submit" class="px-4 py-2 rounded bg-blue-600 hover:bg-blue-700 text-sm">Save</button>
+      </div>
+    </form>
+  `);
+};
+
+window.saveWallet = async function(e, id) {
+  e.preventDefault();
+  const data = {
+    name: document.getElementById('wallet-name').value,
+    category: document.getElementById('wallet-category').value,
+  };
+  try {
+    if (id) {
+      await API.put(`/wallets/${id}`, data);
+      showToast('Wallet updated');
+    } else {
+      await API.post('/wallets', data);
+      showToast('Wallet created');
+    }
+    closeModal();
+    renderWallets();
+  } catch (err) { showToast(err.message, 'error'); }
+  return false;
+};
+
+window.deleteWallet = async function(id) {
+  if (!confirm('Delete this wallet?')) return;
+  try {
+    await API.del(`/wallets/${id}`);
+    showToast('Wallet deleted');
+    renderWallets();
+  } catch (err) { showToast(err.message, 'error'); }
+};
+
+// ===== Incomes =====
+async function renderIncomes() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const [incomes, wallets] = await Promise.all([API.get('/incomes'), API.get('/wallets')]);
+    const incomeWallets = wallets.filter(w => w.category === 'income');
+    el.innerHTML = `
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">Incomes</h2>
+        <button onclick='showIncomeForm(${JSON.stringify(incomeWallets).replace(/'/g, "\\'")})' class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+      </div>
+      <div class="bg-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead><tr class="bg-gray-700 text-left text-sm">
+            <th class="p-3">Description</th><th class="p-3">Wallet</th><th class="p-3">Amount</th><th class="p-3">Date</th><th class="p-3">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${incomes.length ? incomes.map(i => `
+              <tr class="border-t border-gray-700 text-sm">
+                <td class="p-3">${i.description}</td>
+                <td class="p-3">${i.wallet ? i.wallet.name : '-'}</td>
+                <td class="p-3 text-green-400">+$${parseFloat(i.amount).toFixed(2)}</td>
+                <td class="p-3">${i.created_at ? new Date(i.created_at.date || i.created_at).toLocaleDateString() : '-'}</td>
+                <td class="p-3">
+                  <button onclick='showIncomeEdit(${JSON.stringify(i).replace(/'/g, "\\'")}, ${JSON.stringify(incomeWallets).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
+                  <button onclick='deleteIncome(${i.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No incomes found</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+window.showIncomeForm = function(wallets) {
+  openModal(`
+    <h3 class="text-lg font-bold mb-4">Add Income</h3>
+    <form onsubmit="return saveIncome(event, null)">
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Description</label>
+        <input id="income-desc" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Wallet</label>
+        <select id="income-wallet" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+          <option value="">-- Select --</option>
+          ${wallets.map(w => `<option value="${w.id}">${w.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Amount</label>
+        <input id="income-amount" type="number" step="0.01" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-sm">Cancel</button>
+        <button type="submit" class="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-sm">Save</button>
+      </div>
+    </form>
+  `);
+};
+
+window.showIncomeEdit = function(income, wallets) {
+  openModal(`
+    <h3 class="text-lg font-bold mb-4">Edit Income</h3>
+    <form onsubmit="return saveIncome(event, ${income.id})">
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Description</label>
+        <input id="income-desc" value="${income.description || ''}" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Wallet</label>
+        <select id="income-wallet" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+          <option value="">-- Select --</option>
+          ${wallets.map(w => `<option value="${w.id}" ${income.wallet && income.wallet.id === w.id ? 'selected' : ''}>${w.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Amount</label>
+        <input id="income-amount" type="number" step="0.01" value="${income.amount}" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-sm">Cancel</button>
+        <button type="submit" class="px-4 py-2 rounded bg-green-600 hover:bg-green-700 text-sm">Update</button>
+      </div>
+    </form>
+  `);
+};
+
+window.saveIncome = async function(e, id) {
+  e.preventDefault();
+  const data = {
+    description: document.getElementById('income-desc').value,
+    amount: document.getElementById('income-amount').value,
+    wallet_id: document.getElementById('income-wallet').value || null,
+  };
+  try {
+    if (id) {
+      await API.put(`/incomes/${id}`, data);
+      showToast('Income updated');
+    } else {
+      await API.post('/incomes', data);
+      showToast('Income created');
+    }
+    closeModal();
+    renderIncomes();
+  } catch (err) { showToast(err.message, 'error'); }
+  return false;
+};
+
+window.deleteIncome = async function(id) {
+  if (!confirm('Delete this income?')) return;
+  try {
+    await API.del(`/incomes/${id}`);
+    showToast('Income deleted');
+    renderIncomes();
+  } catch (err) { showToast(err.message, 'error'); }
+};
+
+// ===== Expenses =====
+async function renderExpenses() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const [expenses, wallets] = await Promise.all([API.get('/expenses'), API.get('/wallets')]);
+    const expenseWallets = wallets.filter(w => w.category === 'expense');
+    el.innerHTML = `
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">Expenses</h2>
+        <button onclick='showExpenseForm(${JSON.stringify(expenseWallets).replace(/'/g, "\\'")})' class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+      </div>
+      <div class="bg-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead><tr class="bg-gray-700 text-left text-sm">
+            <th class="p-3">Description</th><th class="p-3">Wallet</th><th class="p-3">Amount</th><th class="p-3">Date</th><th class="p-3">Actions</th>
+          </tr></thead>
+          <tbody>
+            ${expenses.length ? expenses.map(e => `
+              <tr class="border-t border-gray-700 text-sm">
+                <td class="p-3">${e.description}</td>
+                <td class="p-3">${e.wallet ? e.wallet.name : '-'}</td>
+                <td class="p-3 text-red-400">-$${parseFloat(e.amount).toFixed(2)}</td>
+                <td class="p-3">${e.created_at ? new Date(e.created_at.date || e.created_at).toLocaleDateString() : '-'}</td>
+                <td class="p-3">
+                  <button onclick='showExpenseEdit(${JSON.stringify(e).replace(/'/g, "\\'")}, ${JSON.stringify(expenseWallets).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
+                  <button onclick='deleteExpense(${e.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
+                </td>
+              </tr>
+            `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No expenses found</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+window.showExpenseForm = function(wallets) {
+  openModal(`
+    <h3 class="text-lg font-bold mb-4">Add Expense</h3>
+    <form onsubmit="return saveExpense(event, null)">
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Description</label>
+        <input id="expense-desc" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Wallet</label>
+        <select id="expense-wallet" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+          <option value="">-- Select --</option>
+          ${wallets.map(w => `<option value="${w.id}">${w.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Amount</label>
+        <input id="expense-amount" type="number" step="0.01" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-sm">Cancel</button>
+        <button type="submit" class="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-sm">Save</button>
+      </div>
+    </form>
+  `);
+};
+
+window.showExpenseEdit = function(expense, wallets) {
+  openModal(`
+    <h3 class="text-lg font-bold mb-4">Edit Expense</h3>
+    <form onsubmit="return saveExpense(event, ${expense.id})">
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Description</label>
+        <input id="expense-desc" value="${expense.description || ''}" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Wallet</label>
+        <select id="expense-wallet" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none">
+          <option value="">-- Select --</option>
+          ${wallets.map(w => `<option value="${w.id}" ${expense.wallet && expense.wallet.id === w.id ? 'selected' : ''}>${w.name}</option>`).join('')}
+        </select>
+      </div>
+      <div class="mb-4">
+        <label class="block mb-1 text-sm">Amount</label>
+        <input id="expense-amount" type="number" step="0.01" value="${expense.amount}" class="w-full px-3 py-2 rounded bg-gray-700 border border-gray-600 focus:border-blue-500 outline-none" required>
+      </div>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="closeModal()" class="px-4 py-2 rounded bg-gray-600 hover:bg-gray-500 text-sm">Cancel</button>
+        <button type="submit" class="px-4 py-2 rounded bg-red-600 hover:bg-red-700 text-sm">Update</button>
+      </div>
+    </form>
+  `);
+};
+
+window.saveExpense = async function(e, id) {
+  e.preventDefault();
+  const data = {
+    description: document.getElementById('expense-desc').value,
+    amount: document.getElementById('expense-amount').value,
+    wallet_id: document.getElementById('expense-wallet').value || null,
+  };
+  try {
+    if (id) {
+      await API.put(`/expenses/${id}`, data);
+      showToast('Expense updated');
+    } else {
+      await API.post('/expenses', data);
+      showToast('Expense created');
+    }
+    closeModal();
+    renderExpenses();
+  } catch (err) { showToast(err.message, 'error'); }
+  return false;
+};
+
+window.deleteExpense = async function(id) {
+  if (!confirm('Delete this expense?')) return;
+  try {
+    await API.del(`/expenses/${id}`);
+    showToast('Expense deleted');
+    renderExpenses();
+  } catch (err) { showToast(err.message, 'error'); }
+};
+
+// ===== Cashbook =====
+async function renderCashbook() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const entries = await API.get('/cashbook');
+    el.innerHTML = `
+      <h2 class="text-2xl font-bold mb-4">Cashbook</h2>
+      <div class="bg-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead><tr class="bg-gray-700 text-left text-sm">
+            <th class="p-3">Date</th><th class="p-3">Description</th><th class="p-3">Type</th><th class="p-3">In</th><th class="p-3">Out</th>
+          </tr></thead>
+          <tbody>
+            ${entries.length ? entries.map(e => `
+              <tr class="border-t border-gray-700 text-sm">
+                <td class="p-3">${e.created_at ? new Date(e.created_at.date || e.created_at).toLocaleDateString() : '-'}</td>
+                <td class="p-3">${e.description || ''}</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${e.reference_type === 'income' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${e.reference_type || '-'}</span></td>
+                <td class="p-3 text-green-400">${e.in_amount ? '$' + parseFloat(e.in_amount).toFixed(2) : ''}</td>
+                <td class="p-3 text-red-400">${e.out_amount ? '$' + parseFloat(e.out_amount).toFixed(2) : ''}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No entries found</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+// ===== Activities =====
+async function renderActivities() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const activities = await API.get('/activities');
+    el.innerHTML = `
+      <h2 class="text-2xl font-bold mb-4">Activities</h2>
+      <div class="bg-gray-800 rounded-lg overflow-hidden">
+        <table class="w-full">
+          <thead><tr class="bg-gray-700 text-left text-sm">
+            <th class="p-3">Date</th><th class="p-3">Type</th><th class="p-3">Action</th><th class="p-3">IP</th>
+          </tr></thead>
+          <tbody>
+            ${activities.length ? activities.map(a => `
+              <tr class="border-t border-gray-700 text-sm">
+                <td class="p-3">${a.created_at ? new Date(a.created_at.date || a.created_at).toLocaleString() : '-'}</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${a.type === 'success' ? 'bg-green-900 text-green-300' : a.type === 'warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'}">${a.type}</span></td>
+                <td class="p-3">${a.name}</td>
+                <td class="p-3">${a.ip_address || '-'}</td>
+              </tr>
+            `).join('') : '<tr><td colspan="4" class="p-4 text-center text-gray-500">No activities found</td></tr>'}
+          </tbody>
+        </table>
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+// ===== Configurations =====
+async function renderConfigurations() {
+  const el = document.getElementById('page-content');
+  el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  try {
+    const configs = await API.get('/configurations');
+    el.innerHTML = `
+      <h2 class="text-2xl font-bold mb-4">Settings</h2>
+      <div class="bg-gray-800 rounded-lg p-6 space-y-4">
+        ${Object.entries(configs).map(([key, value]) => `
+          <div class="flex justify-between border-b border-gray-700 pb-2">
+            <span class="text-gray-400">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
+            <span class="font-medium">${typeof value === 'object' ? JSON.stringify(value) : value}</span>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch (e) {
+    el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+// ===== Init =====
+(async function init() {
+  const authed = await checkAuth();
+  if (!authed) {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>

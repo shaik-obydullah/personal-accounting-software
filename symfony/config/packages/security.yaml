@@ -1,0 +1,28 @@
+security:
+    password_hashers:
+        App\Entity\Admin: 'auto'
+
+    providers:
+        app_user_provider:
+            entity:
+                class: App\Entity\Admin
+                property: email
+
+    firewalls:
+        dev:
+            pattern: ^/(_profiler|_wdt|assets|build)/
+            security: false
+        main:
+            lazy: true
+            provider: app_user_provider
+            json_login:
+                check_path: api_auth_login
+                username_path: email
+                password_path: password
+            logout:
+                path: api_auth_logout
+
+    access_control:
+        - { path: ^/api/auth/login, roles: PUBLIC_ACCESS }
+        - { path: ^/api, roles: ROLE_USER }
+        - { path: ^/, roles: PUBLIC_ACCESS }
