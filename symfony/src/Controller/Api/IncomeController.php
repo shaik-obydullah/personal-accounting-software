@@ -44,8 +44,6 @@ class IncomeController extends AbstractController
         $cashbook = new Cashbook();
         $cashbook->setInAmount($data['amount']);
         $cashbook->setReferenceId($income->getId());
-        $cashbook->setReferenceType('income');
-        $cashbook->setDescription($data['description']);
         $cashbook->setCreatedBy($this->getUser()?->getId());
         $this->em->persist($cashbook);
         $this->em->flush();

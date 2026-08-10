@@ -21,14 +21,8 @@ class Cashbook
     #[ORM\Column(type: 'decimal', precision: 10, scale: 2, nullable: true)]
     private ?string $outAmount = null;
 
-    #[ORM\Column(type: 'bigint')]
+    #[ORM\Column(type: 'bigint', name: 'fk_reference_id')]
     private ?int $referenceId = null;
-
-    #[ORM\Column(length: 20, nullable: true)]
-    private ?string $referenceType = null;
-
-    #[ORM\Column(type: 'text', nullable: true)]
-    private ?string $description = null;
 
     #[ORM\Column(type: 'datetime_immutable', nullable: true)]
     private ?\DateTimeInterface $createdAt = null;
@@ -55,12 +49,6 @@ class Cashbook
 
     public function getReferenceId(): ?int { return $this->referenceId; }
     public function setReferenceId(int $referenceId): static { $this->referenceId = $referenceId; return $this; }
-
-    public function getReferenceType(): ?string { return $this->referenceType; }
-    public function setReferenceType(?string $referenceType): static { $this->referenceType = $referenceType; return $this; }
-
-    public function getDescription(): ?string { return $this->description; }
-    public function setDescription(?string $description): static { $this->description = $description; return $this; }
 
     public function getCreatedAt(): ?\DateTimeInterface { return $this->createdAt; }
     public function setCreatedAt(?\DateTimeInterface $createdAt): static { $this->createdAt = $createdAt; return $this; }

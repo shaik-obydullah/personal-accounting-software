@@ -3,6 +3,7 @@
 <head>
   <title>Personal Accounting</title>
   <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
   <style>
     * { box-sizing: border-box; }
@@ -40,7 +41,7 @@
     <!-- Sidebar -->
     <aside class="w-64 bg-gray-800 flex-shrink-0 overflow-y-auto">
       <div class="p-4 border-b border-gray-700">
-        <h1 class="text-lg font-bold">Accounting App</h1>
+        <h1 class="text-lg font-bold">Personal Accounting</h1>
         <p id="user-info" class="text-sm text-gray-400 mt-1"></p>
       </div>
       <nav class="p-2 space-y-1" id="sidebar-nav">
@@ -99,6 +100,52 @@ const API = {
 };
 
 // ===== Toast =====
+const ucfirst = s => s ? s.charAt(0).toUpperCase() + s.slice(1) : s;
+
+const PER_PAGE = 20;
+
+function debounce(fn, ms = 400) {
+  let t;
+  return (...args) => {
+    clearTimeout(t);
+    t = setTimeout(() => fn(...args), ms);
+  };
+}
+
+function focusSearch(id) {
+  const el = document.getElementById(id);
+  if (el) {
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }
+}
+
+function paginationHTML(page, totalPages, total, fn) {
+  let start = (page - 1) * PER_PAGE + 1;
+  let end = Math.min(page * PER_PAGE, total);
+  const pages = new Set([1, totalPages]);
+  for (let p = page - 2; p <= page + 2; p++) {
+    if (p >= 1 && p <= totalPages) pages.add(p);
+  }
+  const sorted = [...pages].sort((a, b) => a - b);
+  let btns = '';
+  let prev = 0;
+  for (const p of sorted) {
+    if (p - prev > 1) btns += '<span class="px-1 text-gray-500">…</span>';
+    btns += `<button onclick="${fn}(${p})" class="px-3 py-1 rounded text-xs ${p === page ? 'bg-blue-600' : 'bg-gray-700 hover:bg-gray-600'}">${p}</button>`;
+    prev = p;
+  }
+  return `
+    <div class="flex items-center justify-between p-4 text-sm text-gray-400 border-t border-gray-700">
+      <span>Showing ${start}-${end} of ${total}</span>
+      <div class="flex gap-2 items-center">
+        <button onclick="${fn}(${page - 1})" ${page <= 1 ? 'disabled' : ''} class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"><i class="fas fa-chevron-left"></i></button>
+        ${btns}
+        <button onclick="${fn}(${page + 1})" ${page >= totalPages ? 'disabled' : ''} class="px-3 py-1 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"><i class="fas fa-chevron-right"></i></button>
+      </div>
+    </div>`;
+}
+
 function showToast(msg, type = 'success') {
   const t = document.getElementById('toast');
   t.className = `fixed top-4 right-4 px-4 py-3 rounded shadow-lg z-50 text-sm fade-in ${type === 'success' ? 'bg-green-600' : 'bg-red-600'}`;
@@ -197,11 +244,15 @@ function navigate() {
 window.addEventListener('hashchange', navigate);
 
 // ===== Dashboard =====
+let dashboardCharts = [];
+
 async function renderDashboard() {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
+  dashboardCharts.forEach(c => c.destroy());
+  dashboardCharts = [];
   try {
-    const stats = await API.get('/dashboard/stats');
+    const [stats, charts] = await Promise.all([API.get('/dashboard/stats'), API.get('/dashboard/charts')]);
     el.innerHTML = `
       <h2 class="text-2xl font-bold mb-6">Dashboard</h2>
       <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
@@ -210,7 +261,75 @@ async function renderDashboard() {
         <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Balance</div><div class="text-2xl font-bold ${stats.balance >= 0 ? 'text-blue-400' : 'text-red-400'}">$${parseFloat(stats.balance).toFixed(2)}</div></div>
         <div class="bg-gray-800 p-4 rounded-lg"><div class="text-sm text-gray-400">Transactions</div><div class="text-2xl font-bold">${stats.incomeCount + stats.expenseCount}</div></div>
       </div>
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div class="bg-gray-800 p-4 rounded-lg lg:col-span-2">
+          <h3 class="text-sm font-semibold text-gray-400 mb-3">Monthly Income vs Expenses</h3>
+          <div style="height:280px"><canvas id="chart-monthly"></canvas></div>
+        </div>
+        <div class="bg-gray-800 p-4 rounded-lg">
+          <h3 class="text-sm font-semibold text-gray-400 mb-3">Expenses by Wallet</h3>
+          <div style="height:280px"><canvas id="chart-expense-wallet"></canvas></div>
+        </div>
+      </div>
+      <div class="bg-gray-800 p-4 rounded-lg mt-4">
+        <h3 class="text-sm font-semibold text-gray-400 mb-3">Income by Wallet</h3>
+        <div style="height:140px"><canvas id="chart-income-wallet"></canvas></div>
+      </div>
     `;
+
+    const monthly = charts.monthly || [];
+    dashboardCharts.push(new Chart(document.getElementById('chart-monthly'), {
+      type: 'bar',
+      data: {
+        labels: monthly.map(m => m.month),
+        datasets: [
+          { label: 'Income', data: monthly.map(m => m.income), backgroundColor: 'rgba(34,197,94,0.6)', borderColor: '#22c55e', borderWidth: 1 },
+          { label: 'Expense', data: monthly.map(m => m.expense), backgroundColor: 'rgba(239,68,68,0.6)', borderColor: '#ef4444', borderWidth: 1 },
+        ],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { labels: { color: '#d1d5db' } } },
+        scales: {
+          x: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+          y: { beginAtZero: true, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+        },
+      },
+    }));
+
+    const expWallets = charts.expenseByWallet || [];
+    dashboardCharts.push(new Chart(document.getElementById('chart-expense-wallet'), {
+      type: 'doughnut',
+      data: {
+        labels: expWallets.map(w => w.name),
+        datasets: [{ data: expWallets.map(w => w.total), backgroundColor: ['#ef4444', '#f97316', '#eab308', '#22c55e', '#3b82f6', '#8b5cf6', '#ec4899', '#14b8a6'] }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { position: 'bottom', labels: { color: '#d1d5db' } } },
+      },
+    }));
+
+    const incWallets = charts.incomeByWallet || [];
+    dashboardCharts.push(new Chart(document.getElementById('chart-income-wallet'), {
+      type: 'bar',
+      data: {
+        labels: incWallets.map(w => w.name),
+        datasets: [{ label: 'Income', data: incWallets.map(w => w.total), backgroundColor: 'rgba(34,197,94,0.6)', borderColor: '#22c55e', borderWidth: 1 }],
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        indexAxis: 'y',
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { beginAtZero: true, ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+          y: { ticks: { color: '#9ca3af' }, grid: { color: '#374151' } },
+        },
+      },
+    }));
   } catch (e) {
     el.innerHTML = `<div class="text-red-400">Error loading dashboard: ${e.message}</div>`;
   }
@@ -236,7 +355,7 @@ async function renderWallets() {
             ${wallets.length ? wallets.map(w => `
               <tr class="border-t border-gray-700 text-sm">
                 <td class="p-3">${w.name}</td>
-                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${w.category === 'income' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${w.category || '-'}</span></td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${w.category === 'income' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${ucfirst(w.category) || '-'}</span></td>
                 <td class="p-3">
                   <button onclick='showWalletForm(${JSON.stringify(w).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
                   <button onclick='deleteWallet(${w.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
@@ -306,16 +425,31 @@ window.deleteWallet = async function(id) {
 };
 
 // ===== Incomes =====
-async function renderIncomes() {
+let incomeSearch = '';
+const debouncedIncomeSearch = debounce(() => { renderIncomes(1); focusSearch('income-search'); });
+
+async function renderIncomes(page = 1) {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
   try {
     const [incomes, wallets] = await Promise.all([API.get('/incomes'), API.get('/wallets')]);
     const incomeWallets = wallets.filter(w => w.category === 'income');
+    const q = incomeSearch.trim().toLowerCase();
+    const filtered = q ? incomes.filter(i => (i.description || '').toLowerCase().includes(q)) : incomes;
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+    const pageNum = Math.min(Math.max(1, page), totalPages);
+    const rows = filtered.slice((pageNum - 1) * PER_PAGE, pageNum * PER_PAGE);
     el.innerHTML = `
       <div class="flex justify-between items-center mb-4">
         <h2 class="text-2xl font-bold">Incomes</h2>
-        <button onclick='showIncomeForm(${JSON.stringify(incomeWallets).replace(/'/g, "\\'")})' class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+        <div class="flex gap-2 items-center">
+          <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+            <input id="income-search" value="${incomeSearch}" oninput="incomeSearch=this.value; debouncedIncomeSearch()" placeholder="Search description..." class="bg-gray-700 border border-gray-600 rounded pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <button onclick='showIncomeForm(${JSON.stringify(incomeWallets).replace(/'/g, "\\'")})' class="bg-green-600 hover:bg-green-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+        </div>
       </div>
       <div class="bg-gray-800 rounded-lg overflow-hidden">
         <table class="w-full">
@@ -323,12 +457,12 @@ async function renderIncomes() {
             <th class="p-3">Description</th><th class="p-3">Wallet</th><th class="p-3">Amount</th><th class="p-3">Date</th><th class="p-3">Actions</th>
           </tr></thead>
           <tbody>
-            ${incomes.length ? incomes.map(i => `
+            ${rows.length ? rows.map(i => `
               <tr class="border-t border-gray-700 text-sm">
                 <td class="p-3">${i.description}</td>
                 <td class="p-3">${i.wallet ? i.wallet.name : '-'}</td>
                 <td class="p-3 text-green-400">+$${parseFloat(i.amount).toFixed(2)}</td>
-                <td class="p-3">${i.created_at ? new Date(i.created_at.date || i.created_at).toLocaleDateString() : '-'}</td>
+                <td class="p-3">${i.createdAt ? new Date(i.createdAt).toLocaleDateString() : '-'}</td>
                 <td class="p-3">
                   <button onclick='showIncomeEdit(${JSON.stringify(i).replace(/'/g, "\\'")}, ${JSON.stringify(incomeWallets).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
                   <button onclick='deleteIncome(${i.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
@@ -337,6 +471,7 @@ async function renderIncomes() {
             `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No incomes found</td></tr>'}
           </tbody>
         </table>
+        ${totalPages > 1 ? paginationHTML(pageNum, totalPages, total, 'renderIncomes') : ''}
       </div>
     `;
   } catch (e) {
@@ -429,16 +564,31 @@ window.deleteIncome = async function(id) {
 };
 
 // ===== Expenses =====
-async function renderExpenses() {
+let expenseSearch = '';
+const debouncedExpenseSearch = debounce(() => { renderExpenses(1); focusSearch('expense-search'); });
+
+async function renderExpenses(page = 1) {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
   try {
     const [expenses, wallets] = await Promise.all([API.get('/expenses'), API.get('/wallets')]);
     const expenseWallets = wallets.filter(w => w.category === 'expense');
+    const q = expenseSearch.trim().toLowerCase();
+    const filtered = q ? expenses.filter(e => (e.description || '').toLowerCase().includes(q)) : expenses;
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+    const pageNum = Math.min(Math.max(1, page), totalPages);
+    const rows = filtered.slice((pageNum - 1) * PER_PAGE, pageNum * PER_PAGE);
     el.innerHTML = `
       <div class="flex justify-between items-center mb-4">
         <h2 class="text-2xl font-bold">Expenses</h2>
-        <button onclick='showExpenseForm(${JSON.stringify(expenseWallets).replace(/'/g, "\\'")})' class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+        <div class="flex gap-2 items-center">
+          <div class="relative">
+            <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+            <input id="expense-search" value="${expenseSearch}" oninput="expenseSearch=this.value; debouncedExpenseSearch()" placeholder="Search description..." class="bg-gray-700 border border-gray-600 rounded pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+          </div>
+          <button onclick='showExpenseForm(${JSON.stringify(expenseWallets).replace(/'/g, "\\'")})' class="bg-red-600 hover:bg-red-700 px-4 py-2 rounded text-sm"><i class="fas fa-plus mr-1"></i>Add</button>
+        </div>
       </div>
       <div class="bg-gray-800 rounded-lg overflow-hidden">
         <table class="w-full">
@@ -446,12 +596,12 @@ async function renderExpenses() {
             <th class="p-3">Description</th><th class="p-3">Wallet</th><th class="p-3">Amount</th><th class="p-3">Date</th><th class="p-3">Actions</th>
           </tr></thead>
           <tbody>
-            ${expenses.length ? expenses.map(e => `
+            ${rows.length ? rows.map(e => `
               <tr class="border-t border-gray-700 text-sm">
                 <td class="p-3">${e.description}</td>
                 <td class="p-3">${e.wallet ? e.wallet.name : '-'}</td>
                 <td class="p-3 text-red-400">-$${parseFloat(e.amount).toFixed(2)}</td>
-                <td class="p-3">${e.created_at ? new Date(e.created_at.date || e.created_at).toLocaleDateString() : '-'}</td>
+                <td class="p-3">${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : '-'}</td>
                 <td class="p-3">
                   <button onclick='showExpenseEdit(${JSON.stringify(e).replace(/'/g, "\\'")}, ${JSON.stringify(expenseWallets).replace(/'/g, "\\'")})' class="text-blue-400 hover:text-blue-300 mr-2"><i class="fas fa-edit"></i></button>
                   <button onclick='deleteExpense(${e.id})' class="text-red-400 hover:text-red-300"><i class="fas fa-trash"></i></button>
@@ -460,6 +610,7 @@ async function renderExpenses() {
             `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No expenses found</td></tr>'}
           </tbody>
         </table>
+        ${totalPages > 1 ? paginationHTML(pageNum, totalPages, total, 'renderExpenses') : ''}
       </div>
     `;
   } catch (e) {
@@ -552,30 +703,49 @@ window.deleteExpense = async function(id) {
 };
 
 // ===== Cashbook =====
-async function renderCashbook() {
+let cashbookSearch = '';
+const debouncedCashbookSearch = debounce(() => { renderCashbook(1); focusSearch('cashbook-search'); });
+
+async function renderCashbook(page = 1) {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
   try {
     const entries = await API.get('/cashbook');
+    const q = cashbookSearch.trim().toLowerCase();
+    const filtered = q ? entries.filter(e => {
+      const type = e.inAmount ? 'income' : 'expense';
+      return String(e.referenceId || '').includes(q) || type.includes(q) || (e.description || '').toLowerCase().includes(q);
+    }) : entries;
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+    const pageNum = Math.min(Math.max(1, page), totalPages);
+    const rows = filtered.slice((pageNum - 1) * PER_PAGE, pageNum * PER_PAGE);
     el.innerHTML = `
-      <h2 class="text-2xl font-bold mb-4">Cashbook</h2>
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">Cashbook</h2>
+        <div class="relative">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+          <input id="cashbook-search" value="${cashbookSearch}" oninput="cashbookSearch=this.value; debouncedCashbookSearch()" placeholder="Search reference, type or description..." class="bg-gray-700 border border-gray-600 rounded pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+      </div>
       <div class="bg-gray-800 rounded-lg overflow-hidden">
         <table class="w-full">
           <thead><tr class="bg-gray-700 text-left text-sm">
             <th class="p-3">Date</th><th class="p-3">Description</th><th class="p-3">Type</th><th class="p-3">In</th><th class="p-3">Out</th>
           </tr></thead>
           <tbody>
-            ${entries.length ? entries.map(e => `
+            ${rows.length ? rows.map(e => `
               <tr class="border-t border-gray-700 text-sm">
-                <td class="p-3">${e.created_at ? new Date(e.created_at.date || e.created_at).toLocaleDateString() : '-'}</td>
-                <td class="p-3">${e.description || ''}</td>
-                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${e.reference_type === 'income' ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${e.reference_type || '-'}</span></td>
-                <td class="p-3 text-green-400">${e.in_amount ? '$' + parseFloat(e.in_amount).toFixed(2) : ''}</td>
-                <td class="p-3 text-red-400">${e.out_amount ? '$' + parseFloat(e.out_amount).toFixed(2) : ''}</td>
+                <td class="p-3">${e.createdAt ? new Date(e.createdAt).toLocaleDateString() : '-'}</td>
+                <td class="p-3">${e.description || '-'}</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${e.inAmount ? 'bg-green-900 text-green-300' : 'bg-red-900 text-red-300'}">${e.inAmount ? 'Income' : 'Expense'}</span></td>
+                <td class="p-3 text-green-400">${e.inAmount ? '$' + parseFloat(e.inAmount).toFixed(2) : ''}</td>
+                <td class="p-3 text-red-400">${e.outAmount ? '$' + parseFloat(e.outAmount).toFixed(2) : ''}</td>
               </tr>
             `).join('') : '<tr><td colspan="5" class="p-4 text-center text-gray-500">No entries found</td></tr>'}
           </tbody>
         </table>
+        ${totalPages > 1 ? paginationHTML(pageNum, totalPages, total, 'renderCashbook') : ''}
       </div>
     `;
   } catch (e) {
@@ -584,29 +754,49 @@ async function renderCashbook() {
 }
 
 // ===== Activities =====
-async function renderActivities() {
+let activitySearch = '';
+const debouncedActivitySearch = debounce(() => { renderActivities(1); focusSearch('activity-search'); });
+
+async function renderActivities(page = 1) {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
   try {
     const activities = await API.get('/activities');
+    const q = activitySearch.trim().toLowerCase();
+    const filtered = q ? activities.filter(a => {
+      return (a.type || '').toLowerCase().includes(q)
+        || (a.name || '').toLowerCase().includes(q)
+        || (a.ipAddress || '').toLowerCase().includes(q);
+    }) : activities;
+    const total = filtered.length;
+    const totalPages = Math.max(1, Math.ceil(total / PER_PAGE));
+    const pageNum = Math.min(Math.max(1, page), totalPages);
+    const rows = filtered.slice((pageNum - 1) * PER_PAGE, pageNum * PER_PAGE);
     el.innerHTML = `
-      <h2 class="text-2xl font-bold mb-4">Activities</h2>
+      <div class="flex justify-between items-center mb-4">
+        <h2 class="text-2xl font-bold">Activities</h2>
+        <div class="relative">
+          <i class="fas fa-search absolute left-3 top-1/2 -translate-y-1/2 text-gray-500 text-xs"></i>
+          <input id="activity-search" value="${activitySearch}" oninput="activitySearch=this.value; debouncedActivitySearch()" placeholder="Search type, action or IP..." class="bg-gray-700 border border-gray-600 rounded pl-8 pr-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+        </div>
+      </div>
       <div class="bg-gray-800 rounded-lg overflow-hidden">
         <table class="w-full">
           <thead><tr class="bg-gray-700 text-left text-sm">
             <th class="p-3">Date</th><th class="p-3">Type</th><th class="p-3">Action</th><th class="p-3">IP</th>
           </tr></thead>
           <tbody>
-            ${activities.length ? activities.map(a => `
+            ${rows.length ? rows.map(a => `
               <tr class="border-t border-gray-700 text-sm">
-                <td class="p-3">${a.created_at ? new Date(a.created_at.date || a.created_at).toLocaleString() : '-'}</td>
-                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${a.type === 'success' ? 'bg-green-900 text-green-300' : a.type === 'warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'}">${a.type}</span></td>
+                <td class="p-3">${a.createdAt ? new Date(a.createdAt).toLocaleString() : '-'}</td>
+                <td class="p-3"><span class="px-2 py-0.5 rounded text-xs ${a.type === 'success' ? 'bg-green-900 text-green-300' : a.type === 'warning' ? 'bg-yellow-900 text-yellow-300' : 'bg-red-900 text-red-300'}">${ucfirst(a.type)}</span></td>
                 <td class="p-3">${a.name}</td>
-                <td class="p-3">${a.ip_address || '-'}</td>
+                <td class="p-3">${a.ipAddress || '-'}</td>
               </tr>
             `).join('') : '<tr><td colspan="4" class="p-4 text-center text-gray-500">No activities found</td></tr>'}
           </tbody>
         </table>
+        ${totalPages > 1 ? paginationHTML(pageNum, totalPages, total, 'renderActivities') : ''}
       </div>
     `;
   } catch (e) {
@@ -615,24 +805,103 @@ async function renderActivities() {
 }
 
 // ===== Configurations =====
+const REMOVED_CONFIGS = new Set(['meta_title', 'meta_description', 'meta_keyword', 'meta_image', 'meta_url', 'linkedin', 'github']);
+
+const CURRENCY_OPTIONS = [
+  {code: 'GBP', name: 'British Pound', symbol: '£'},
+  {code: 'USD', name: 'US Dollar', symbol: '$'},
+  {code: 'EUR', name: 'Euro', symbol: '€'},
+  {code: 'BDT', name: 'Bangladeshi Taka', symbol: '৳'},
+  {code: 'INR', name: 'Indian Rupee', symbol: '₹'},
+  {code: 'PKR', name: 'Pakistani Rupee', symbol: '₨'},
+  {code: 'JPY', name: 'Japanese Yen', symbol: '¥'},
+  {code: 'AUD', name: 'Australian Dollar', symbol: 'A$'},
+  {code: 'CAD', name: 'Canadian Dollar', symbol: 'C$'},
+];
+
+const configLabel = key => key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+
 async function renderConfigurations() {
   const el = document.getElementById('page-content');
   el.innerHTML = '<div class="text-center py-8"><i class="fas fa-spinner fa-spin text-3xl"></i></div>';
   try {
     const configs = await API.get('/configurations');
+    const esc = v => String(v).replace(/'/g, '&#39;');
+    const activeCurrencies = (configs.currencies || []).map(c => c.code);
+    const defaultCurrency = configs.default_currency || '';
+    const rows = Object.entries(configs).filter(([key]) => !REMOVED_CONFIGS.has(key));
     el.innerHTML = `
       <h2 class="text-2xl font-bold mb-4">Settings</h2>
       <div class="bg-gray-800 rounded-lg p-6 space-y-4">
-        ${Object.entries(configs).map(([key, value]) => `
-          <div class="flex justify-between border-b border-gray-700 pb-2">
-            <span class="text-gray-400">${key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}</span>
-            <span class="font-medium">${typeof value === 'object' ? JSON.stringify(value) : value}</span>
-          </div>
-        `).join('')}
+        ${rows.map(([key, value]) => {
+          const label = configLabel(key);
+          if (key === 'currencies') {
+            return `
+              <div class="border-b border-gray-700 pb-3">
+                <label class="text-gray-400 block mb-2">Currencies</label>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-2">
+                  ${CURRENCY_OPTIONS.map(c => `
+                    <label class="flex items-center gap-2 text-sm bg-gray-900 border border-gray-700 rounded px-3 py-2 cursor-pointer">
+                      <input type="checkbox" class="currency-opt" value="${c.code}" data-name="${c.name}" data-symbol="${esc(c.symbol)}" ${activeCurrencies.includes(c.code) ? 'checked' : ''}>
+                      ${c.code} - ${c.name} (${c.symbol})
+                    </label>
+                  `).join('')}
+                </div>
+                <button onclick="saveConfiguration('${key}')" class="mt-3 bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded text-xs"><i class="fas fa-save mr-1"></i>Save</button>
+              </div>`;
+          }
+          if (key === 'default_currency') {
+            return `
+              <div class="flex items-center gap-3 border-b border-gray-700 pb-3">
+                <label class="text-gray-400 w-48 shrink-0">${label}</label>
+                <select id="cfg-${key}" class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500">
+                  ${CURRENCY_OPTIONS.map(c => `<option value="${c.code}" ${c.code === defaultCurrency ? 'selected' : ''}>${c.code} - ${c.name}</option>`).join('')}
+                </select>
+                <button onclick="saveConfiguration('${key}')" class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded text-xs shrink-0"><i class="fas fa-save mr-1"></i>Save</button>
+              </div>`;
+          }
+          return `
+            <div class="flex items-center gap-3 border-b border-gray-700 pb-3">
+              <label class="text-gray-400 w-48 shrink-0">${label}</label>
+              <input id="cfg-${key}" type="text" value='${esc(typeof value === 'object' ? JSON.stringify(value) : value)}' class="flex-1 bg-gray-900 border border-gray-700 rounded px-3 py-2 text-sm focus:outline-none focus:border-blue-500" onkeydown="if(event.key==='Enter')saveConfiguration('${key}')">
+              <button onclick="saveConfiguration('${key}')" class="bg-blue-600 hover:bg-blue-700 px-3 py-2 rounded text-xs shrink-0"><i class="fas fa-save mr-1"></i>Save</button>
+            </div>`;
+        }).join('')}
       </div>
     `;
   } catch (e) {
     el.innerHTML = `<div class="text-red-400">Error: ${e.message}</div>`;
+  }
+}
+
+async function saveConfiguration(key) {
+  if (key === 'currencies') {
+    const setting = [...document.querySelectorAll('.currency-opt:checked')].map(c => ({
+      code: c.value,
+      name: c.dataset.name,
+      symbol: c.dataset.symbol,
+    }));
+    try {
+      await API.put('/configurations/' + key, {setting});
+      showToast('Currencies saved');
+      renderConfigurations();
+    } catch (e) {
+      alert('Error: ' + e.message);
+    }
+    return;
+  }
+  const input = document.getElementById('cfg-' + key);
+  if (!input) return;
+  let value = input.value.trim();
+  let setting = value;
+  try {
+    setting = JSON.parse(value);
+  } catch (e) {}
+  try {
+    await API.put('/configurations/' + key, {setting});
+    showToast('Saved ' + key.replace(/_/g, ' '));
+  } catch (e) {
+    alert('Error: ' + e.message);
   }
 }
 

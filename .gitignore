@@ -26,5 +26,6 @@ Homestead.json
 Homestead.yaml
 Thumbs.db
 
-/obydullah.com
-if0_41866113_obydullah.sql
+docs
+accounting_db (demo).sql
+accounting_db.sql

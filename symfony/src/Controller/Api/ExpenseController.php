@@ -44,8 +44,6 @@ class ExpenseController extends AbstractController
         $cashbook = new Cashbook();
         $cashbook->setOutAmount($data['amount']);
         $cashbook->setReferenceId($expense->getId());
-        $cashbook->setReferenceType('expense');
-        $cashbook->setDescription($data['description']);
         $cashbook->setCreatedBy($this->getUser()?->getId());
         $this->em->persist($cashbook);
         $this->em->flush();
