@@ -29,8 +29,8 @@ Self-hosted, API-first personal finance web app. Record incomes and expenses aga
 docker compose up -d --build
 ```
 
-| Service    | URL             |
-|------------|-----------------|
+| Service    | URL                   |
+| ---------- | --------------------- |
 | App        | http://localhost:8040 |
 | phpMyAdmin | http://localhost:8041 |
 
@@ -39,33 +39,36 @@ Default login: `admin@accounting.com` / `password`
 ## Screenshots
 
 ### Login
+
 ![Login](screenshots/Login.png)
 
 ### Dashboard
+
 ![Dashboard](screenshots/Dashboard.png)
 
 ### Wallets
+
 ![Wallets](screenshots/Wallets.png)
 
 ### Incomes
+
 ![Incomes](screenshots/Incomes.png)
 
 ### Expenses
+
 ![Expenses](screenshots/Expenses.png)
 
 ### Cashbook
+
 ![Cashbook](screenshots/Cashbook.png)
 
 ### Activities
+
 ![Activities](screenshots/Activities.png)
 
 ### Settings
+
 ![Settings](screenshots/Settings.png)
-
-## Documentation
-
-- `AGENTS.md` — codebase guide for AI agents / new developers
-- `docs/case-study.html` — project case study (publish-ready)
 
 ## License
 
